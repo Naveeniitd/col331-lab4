@@ -195,37 +195,26 @@ userinit(void)
   release(&ptable.lock);
 }
 
-// Grow current process's memory by n bytes.
-// Return 0 on success, -1 on failure.
-int growproc(int n) {
-  uint oldsz, newsz;
-  struct proc *curproc = myproc();
-  
-  oldsz = curproc->sz;
-  if(n > 0){
-    if((newsz = allocuvm(curproc->pgdir, oldsz, oldsz + n)) == 0)
-      return -1;
-  } else if(n < 0){
-    if((newsz = deallocuvm(curproc->pgdir, oldsz, oldsz + n)) == 0)
-      return -1;
-  }
+/// Grow current process's memory by n bytes.
+ // Return 0 on success, -1 on failure.
+ int
+ growproc(int n)
+ {
+   uint sz;
+   struct proc *curproc = myproc();
 
-  // Assuming allocuvm and deallocuvm are now accurately updating process size
-  // Update RSS based on the change in size
-  int delta = newsz - oldsz; // Calculate change in size
-  if(delta > 0) {
-    // If the process grew, increment RSS
-    curproc->rss += delta;
-  } else if(delta < 0) {
-    // If the process shrank, decrement RSS
-    // Make sure RSS does not go below zero
-    curproc->rss = curproc->rss + delta >= 0 ? curproc->rss + delta : 0;
-  }
-
-  curproc->sz = newsz;
-  switchuvm(curproc);
-  return 0;
-}
+   sz = curproc->sz;
+   if(n > 0){
+     if((sz = allocuvm(curproc->pgdir, sz, sz + n)) == 0)
+       return -1;
+   } else if(n < 0){
+     if((sz = deallocuvm(curproc->pgdir, sz, sz + n)) == 0)
+       return -1;
+   }
+   curproc->sz = sz;
+   switchuvm(curproc);
+   return 0;
+ }
 
 
 // Create a new process copying p as the parent.
