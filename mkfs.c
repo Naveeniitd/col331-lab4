@@ -111,17 +111,24 @@ main(int argc, char *argv[])
          nmeta, nlog, ninodeblocks, nbitmap, nblocks, FSSIZE);
 
   freeblock = nmeta;     // the first free block that we can allocate
-  // Initialize swap space blocks
+  // Initialize swap space blocks first
   for(i = sb.swapstart; i < sb.swapstart + sb.nswap; i++) {
     wsect(i, zeroes);
   }
 
-  for(i = 0; i < FSSIZE; i++)
+  // Zero out the rest of the blocks, starting after the swap space
+  for(i = sb.swapstart + sb.nswap; i < FSSIZE; i++) {
+    // If the loop tries to zero out the superblock again, skip it
+    if(i == 1) continue;
     wsect(i, zeroes);
+  }
 
+  // Write the superblock after initializing the swap space and zeroing out the filesystem
   memset(buf, 0, sizeof(buf));
   memmove(buf, &sb, sizeof(sb));
   wsect(1, buf);
+
+  
 
   rootino = ialloc(T_DIR);
   assert(rootino == ROOTINO);

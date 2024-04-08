@@ -130,7 +130,7 @@ allocproc(void)
 found:
   p->state = EMBRYO;
   p->pid = nextpid++;
-
+  p->rss = 0; 
   release(&ptable.lock);
 
   // Allocate kernel stack.
@@ -153,7 +153,7 @@ found:
   p->context = (struct context*)sp;
   memset(p->context, 0, sizeof *p->context);
   p->context->eip = (uint)forkret;
-  p->rss = 0; 
+ 
   return p;
 }
 
