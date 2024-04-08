@@ -4,9 +4,15 @@
 #include "x86.h"
 #include "memlayout.h"
 #include "mmu.h"
+#include "spinlock.h"
+#include "sleeplock.h"
 #include "proc.h"
 #include "elf.h"
 
+extern struct {
+  struct spinlock lock;
+  struct proc proc[NPROC];
+} ptable;
 extern char data[];  // defined by kernel.ld
 pde_t *kpgdir;  // for use in scheduler()
 
@@ -221,10 +227,10 @@ loaduvm(pde_t *pgdir, char *addr, struct inode *ip, uint offset, uint sz)
 // Check for memory pressure and swap out if necessary
 int allocuvm(pde_t *pgdir, uint oldsz, uint newsz) {
   char *mem;
-  uint a;
+  uint a, pagesAllocated = 0;
 
   if(newsz >= KERNBASE) {
-    return 0;  // Fail if trying to allocate above kernel space
+    return 0; // Fail if trying to allocate above kernel space
   }
 
   if(newsz > oldsz) {
@@ -232,7 +238,7 @@ int allocuvm(pde_t *pgdir, uint oldsz, uint newsz) {
     if(memoryPressure()) {
       struct proc *victim = selectVictimProcess();
       if(victim != NULL) {
-        swapoutProcess(victim);  // Swap out a page from the victim process
+        swapoutProcess(victim); // Swap out a page from the victim process
       }
     }
 
@@ -242,6 +248,7 @@ int allocuvm(pde_t *pgdir, uint oldsz, uint newsz) {
       if(mem == 0) {
         cprintf("allocuvm: out of memory\n");
         deallocuvm(pgdir, newsz, oldsz);
+        // Reverse any RSS changes here if necessary
         return 0;
       }
       memset(mem, 0, PGSIZE);
@@ -249,45 +256,63 @@ int allocuvm(pde_t *pgdir, uint oldsz, uint newsz) {
         cprintf("allocuvm: out of memory (2)\n");
         deallocuvm(pgdir, newsz, oldsz);
         kfree(mem);
+        // Reverse any RSS changes here if necessary
         return 0;
       }
+      pagesAllocated++;
     }
+    // Assuming RSS is in pages, and myproc() fetches the current process structure
+    struct proc *curproc = myproc();
+    acquire(&ptable.lock);
+    curproc->rss += pagesAllocated; // Increment RSS by the number of pages allocated
+    release(&ptable.lock);
   } else if(newsz < oldsz) {
     // Deallocate if shrinking process size
-    if(deallocuvm(pgdir, newsz, oldsz) == 0)
+    if(deallocuvm(pgdir, newsz, oldsz) == 0) {
+      // Handle RSS decrement here if necessary
       return 0;
+    }
   }
   return newsz;
 }
+
 
 
 // Deallocate user pages to bring the process size from oldsz to
 // newsz.  oldsz and newsz need not be page-aligned, nor does newsz
 // need to be less than oldsz.  oldsz can be larger than the actual
 // process size.  Returns the new process size.
-int
-deallocuvm(pde_t *pgdir, uint oldsz, uint newsz)
-{
+int deallocuvm(pde_t *pgdir, uint oldsz, uint newsz) {
   pte_t *pte;
   uint a, pa;
 
   if(newsz >= oldsz)
     return oldsz;
 
+  struct proc *curproc = myproc(); // Assume myproc() gives us the current process.
+
   a = PGROUNDUP(newsz);
-  for(; a  < oldsz; a += PGSIZE){
+  for(; a < oldsz; a += PGSIZE) {
     pte = walkpgdir(pgdir, (char*)a, 0);
     if(!pte)
       a = PGADDR(PDX(a) + 1, 0, 0) - PGSIZE;
-    else if((*pte & PTE_P) != 0){
+    else if((*pte & PTE_P) != 0) {
       pa = PTE_ADDR(*pte);
       if(pa == 0)
         panic("kfree");
       char *v = P2V(pa);
       kfree(v);
       *pte = 0;
+
+      // Decrement the RSS of the current process.
+      if (curproc) { // Safety check in case myproc() returns NULL or if outside user context.
+        acquire(&ptable.lock); // Ensure mutual exclusion when modifying process table.
+        curproc->rss -= 1; // Decrement rss by one page.
+        release(&ptable.lock);
+      }
     }
   }
+
   return newsz;
 }
 
