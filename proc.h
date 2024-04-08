@@ -51,6 +51,13 @@ struct proc {
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
 };
+// In proc.h or at the top of proc.c
+void swapoutProcess(struct proc* p);
+
+pte_t *walkpgdir(pde_t *pgdir, const void *va, int alloc);
+void swap_out(uint va, int perm);
+int memoryPressure(void);
+struct proc *selectVictimProcess(void);
 
 // Process memory is laid out contiguously, low addresses first:
 //   text

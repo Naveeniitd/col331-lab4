@@ -32,7 +32,7 @@ seginit(void)
 // Return the address of the PTE in page table pgdir
 // that corresponds to virtual address va.  If alloc!=0,
 // create any required page table pages.
-static pte_t *
+pte_t *
 walkpgdir(pde_t *pgdir, const void *va, int alloc)
 {
   pde_t *pde;
@@ -218,35 +218,48 @@ loaduvm(pde_t *pgdir, char *addr, struct inode *ip, uint offset, uint sz)
 
 // Allocate page tables and physical memory to grow process from oldsz to
 // newsz, which need not be page aligned.  Returns new size or 0 on error.
-int
-allocuvm(pde_t *pgdir, uint oldsz, uint newsz)
-{
+// Check for memory pressure and swap out if necessary
+int allocuvm(pde_t *pgdir, uint oldsz, uint newsz) {
   char *mem;
   uint a;
 
-  if(newsz >= KERNBASE)
-    return 0;
-  if(newsz < oldsz)
-    return oldsz;
+  if(newsz >= KERNBASE) {
+    return 0;  // Fail if trying to allocate above kernel space
+  }
 
-  a = PGROUNDUP(oldsz);
-  for(; a < newsz; a += PGSIZE){
-    mem = kalloc();
-    if(mem == 0){
-      cprintf("allocuvm out of memory\n");
-      deallocuvm(pgdir, newsz, oldsz);
-      return 0;
+  if(newsz > oldsz) {
+    // Check for memory pressure before allocation
+    if(memoryPressure()) {
+      struct proc *victim = selectVictimProcess();
+      if(victim != NULL) {
+        swapoutProcess(victim);  // Swap out a page from the victim process
+      }
     }
-    memset(mem, 0, PGSIZE);
-    if(mappages(pgdir, (char*)a, PGSIZE, V2P(mem), PTE_W|PTE_U) < 0){
-      cprintf("allocuvm out of memory (2)\n");
-      deallocuvm(pgdir, newsz, oldsz);
-      kfree(mem);
-      return 0;
+
+    a = PGROUNDUP(oldsz);
+    for(; a < newsz; a += PGSIZE) {
+      mem = kalloc();
+      if(mem == 0) {
+        cprintf("allocuvm: out of memory\n");
+        deallocuvm(pgdir, newsz, oldsz);
+        return 0;
+      }
+      memset(mem, 0, PGSIZE);
+      if(mappages(pgdir, (char*)a, PGSIZE, V2P(mem), PTE_W|PTE_U) < 0) {
+        cprintf("allocuvm: out of memory (2)\n");
+        deallocuvm(pgdir, newsz, oldsz);
+        kfree(mem);
+        return 0;
+      }
     }
+  } else if(newsz < oldsz) {
+    // Deallocate if shrinking process size
+    if(deallocuvm(pgdir, newsz, oldsz) == 0)
+      return 0;
   }
   return newsz;
 }
+
 
 // Deallocate user pages to bring the process size from oldsz to
 // newsz.  oldsz and newsz need not be page-aligned, nor does newsz

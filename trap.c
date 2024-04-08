@@ -13,7 +13,7 @@ struct gatedesc idt[256];
 extern uint vectors[];  // in vectors.S: array of 256 entry pointers
 struct spinlock tickslock;
 uint ticks;
-
+extern void swap_in(uint va);
 void
 tvinit(void)
 {
@@ -44,6 +44,13 @@ trap(struct trapframe *tf)
     if(myproc()->killed)
       exit();
     return;
+  }
+  if(tf->trapno == T_PGFLT) {
+    uint va = rcr2(); // faulting address
+    pte_t *pte = walkpgdir(myproc()->pgdir, (void*)va, 0);
+    if(pte && (*pte & PTE_SW)) { // swapped-out page
+        swap_in(va); // page back into memory
+    }
   }
 
   switch(tf->trapno){

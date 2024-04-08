@@ -16,7 +16,7 @@
 #endif
 
 #define NINODES 200
-#define SWAPSIZE 1024  // Example size of swap space in blocks
+#define SWAPSIZE 1024
 
 
 // Disk layout:
@@ -100,20 +100,20 @@ main(int argc, char *argv[])
   sb.nblocks = xint(nblocks);
   sb.ninodes = xint(NINODES);
   sb.nlog = xint(nlog);
-  sb.logstart = xint(2 + SWAPSIZE);  // Adjust log start to account for swap space
-  sb.inodestart = xint(sb.logstart + nlog); // Subsequent sections must also be adjusted
+  sb.logstart = xint(2 + SWAPSIZE);  // to account for swap space
+  sb.inodestart = xint(sb.logstart + nlog); // adjusted
   sb.bmapstart = xint(sb.inodestart + ninodeblocks);
-  sb.swapstart = xint(2);  // Assuming swap space starts right after the superblock
+  sb.swapstart = xint(2);  // swap space starts right after the superblock
   sb.nswap = xint(SWAPSIZE);
 
 
-  printf("nmeta %d (boot, super, log blocks %u inode blocks %u, bitmap blocks %u) blocks %d total %d\n",
+  printf("nmeta %d (boot, super,  log blocks %u inode blocks %u, bitmap blocks %u) blocks %d total %d\n",
          nmeta, nlog, ninodeblocks, nbitmap, nblocks, FSSIZE);
 
   freeblock = nmeta;     // the first free block that we can allocate
   // Initialize swap space blocks
   for(i = sb.swapstart; i < sb.swapstart + sb.nswap; i++) {
-    bzero(fsfd, i);
+    wsect(i, zeroes);
   }
 
   for(i = 0; i < FSSIZE; i++)

@@ -6,6 +6,9 @@
 #include "x86.h"
 #include "proc.h"
 #include "spinlock.h"
+extern uint num_of_FreePages(void);
+#define MEMORY_PRESSURE_THRESHOLD 100 // threshold
+
 
 struct {
   struct spinlock lock;
@@ -19,6 +22,45 @@ extern void forkret(void);
 extern void trapret(void);
 
 static void wakeup1(void *chan);
+
+struct proc* selectVictimProcess(void) {
+    struct proc *victim = 0;
+    int maxRss = -1;
+
+    acquire(&ptable.lock);
+    for(struct proc *p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
+        if(p->state == RUNNABLE || p->state == RUNNING || p->state == SLEEPING) {
+            if(p->rss > maxRss || (p->rss == maxRss && p->pid < victim->pid)) {
+                victim = p;
+                maxRss = p->rss;
+            }
+        }
+    }
+    release(&ptable.lock);
+    return victim;
+}
+void swapoutProcess(struct proc* victim) {
+
+    if(victim == 0 || victim->pgdir == 0) return;
+
+    pte_t *pte;
+    uint va;
+    for(va = 0; va < victim->sz; va += PGSIZE) {
+        pte = walkpgdir(victim->pgdir, (char*)va, 0);
+        if(pte && *pte & PTE_P && !(*pte & PTE_A)) {
+            *pte &= ~PTE_P; // Clear the present flag
+            *pte |= PTE_SW; // custom 'swapped' flag
+            swap_out(va, PTE_FLAGS(*pte)); // swap
+            victim->rss--; // Decrement the rss value as a page is being swapped out
+        }
+        *pte &= ~PTE_A; // Clear the accessed flag
+    }
+    lcr3(V2P(victim->pgdir)); // Flush TLB
+}
+int memoryPressure() {
+    uint freePages = num_of_FreePages();
+    return freePages < MEMORY_PRESSURE_THRESHOLD;
+}
 
 void
 pinit(void)
@@ -111,7 +153,7 @@ found:
   p->context = (struct context*)sp;
   memset(p->context, 0, sizeof *p->context);
   p->context->eip = (uint)forkret;
-
+  p->rss = 0; 
   return p;
 }
 
@@ -334,24 +376,34 @@ void print_rss()
 //  - swtch to start running that process
 //  - eventually that process transfers control
 //      via swtch back to the scheduler.
-void
-scheduler(void)
-{
+
+void scheduler(void) {
   struct proc *p;
   struct cpu *c = mycpu();
   c->proc = 0;
   
-  for(;;){
+  for(;;) {
     // Enable interrupts on this processor.
     sti();
 
+    // Memory pressure check
+    if (num_of_FreePages() < MEMORY_PRESSURE_THRESHOLD) {
+        acquire(&ptable.lock);
+        struct proc *victim = selectVictimProcess();
+        if (victim != NULL) {
+           // to handle the process swapping
+            swapoutProcess(victim); 
+        }
+        release(&ptable.lock);
+    }
+
     // Loop over process table looking for process to run.
     acquire(&ptable.lock);
-    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++) {
       if(p->state != RUNNABLE)
         continue;
 
-      // Switch to chosen process.  It is the process's job
+      // Switch to chosen process. It is the process's job
       // to release ptable.lock and then reacquire it
       // before jumping back to us.
       c->proc = p;
@@ -366,9 +418,9 @@ scheduler(void)
       c->proc = 0;
     }
     release(&ptable.lock);
-
   }
 }
+
 
 // Enter scheduler.  Must hold only ptable.lock
 // and have changed proc->state. Saves and restores
